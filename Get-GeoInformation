@@ -1,0 +1,153 @@
+#one-liner
+invoke-restmethod www.telize.com/geoip -Method get -ContentType application/javascript|Select-Object -Property Longitude,latitude,continent_code,timezone
+
+#advanced function that provides a complete Get-GeoInformation
+function Get-GeoInformation {
+    <#
+    .SYNOPSIS
+        Get geographical information based on current public IP address or specified public IP address.
+
+    .PARAMETER IPAddress
+        If specified, the geographical information for this IP address is requested.    
+    .EXAMPLE
+        PS C:\>Get-GeoInformation
+
+        longitude      : 4,9
+        latitude       : 52,3667
+        asn            : AS9143
+        offset         : 2
+        ip             : 84.26.94.219
+        area_code      : 0
+        continent_code : EU
+        dma_code       : 0
+        timezone       : Europe/Amsterdam
+        country_code   : NL
+        isp            : Ziggo B.V.
+        country        : Netherlands
+        country_code3  : NLD
+
+        This will return geographical information based on the currently used public IP address.
+
+        .EXAMPLE
+        PS C:\>Get-GeoInformation -IPAddress 8.8.8.8
+
+        longitude      : -122,0838
+        latitude       : 37,386
+        asn            : AS15169
+        offset         : -7
+        ip             : 8.8.8.8
+        area_code      : 0
+        continent_code : NA
+        dma_code       : 0
+        city           : Mountain View
+        timezone       : America/Los_Angeles
+        region         : California
+        country_code   : US
+        isp            : Google Inc.
+        postal_code    : 94040
+        country        : United States
+        country_code3  : USA
+        region_code    : CA
+
+        This will return geographical information based on the specified public IP address.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param (
+        [ValidateNotNull()]
+        [ipaddress] $IPAddress = (Invoke-RestMethod -Uri www.telize.com/jsonip -Method Get).ip
+    )
+    Invoke-RestMethod -Uri "www.telize.com/geoip/$IPAddress" -Method Get -ContentType application/javascript
+}
+
+#include the endpoint for another XML or JavaScript Object Notation web service
+#Created a function around Google Maps
+
+<#
+
+.Synopsis
+
+   This CMDLet gets directions info from Google Maps to travel between locations in a City of choice.
+
+.DESCRIPTION
+
+   This CMDLet gets directions info from Google Maps to travel between locations in a City of choice.
+   If you enter your origin adress and your destination adress with the city you are traveling in.
+   It checks your country information and warns you if not the same based on your IP and gives you nice HTML overview you can print.
+   The HTML is stored in Users\%USERNAME%\AppData\Local but deleted when you close the HTML.
+   If you travel with car and want to avoid highways use the switch parameter.
+   Default mode is bicycling but you can also choice walking and driving.
+
+.EXAMPLE
+
+   Get-DirectionsInCity -Origin 'jan van galen' -Destination 'Rokin 200' -City Amsterdam -country Netherlands
+
+.EXAMPLE
+
+   Get-DirectionsInCity -Origin 'jan van galen' -Destination 'Rokin 200' -City Amsterdam -country Netherlands -Mode driving -avoid
+
+#>
+
+function Get-DirectionsInCity
+
+{
+
+    [CmdletBinding()]
+    Param
+    (
+
+        [Parameter(Mandatory=$true,
+                   HelpMessage="Adress you start")]
+        $Origin,
+        [Parameter(Mandatory=$true,
+                   HelpMessage="Destination")]
+        $Destination,
+        [Parameter(Mandatory=$true)]
+        $City,
+        $country,
+
+        [Parameter(HelpMessage="Way you travel could be walking,driving,bicycling")]
+        [ValidateSet("walking","driving","bicycling")] 
+        $Mode = 'bicycling',
+        #set the filepath to the directory where New-temporaryFile stores the .tmp file
+        $filepath = "C:\Users\$env:USERNAME\AppData\Local\Temp\Route.html",
+        $Browser = "C:\Program Files\Internet Explorer\iexplore.exe",
+[Switch]$avoid
+)
+ 
+#get Country from Geo information
+Begin{
+$Tel = invoke-restmethod www.telize.com/geoip -Method get -ContentType application/javascript|Select-Object -Property Longitude,latitude,continent_code,timezone,country
+If ($country -ne $tel.country){
+    Write-warning -Message "$country is different from the country based on your IP $($tel.country)!!"
+   }
+}
+#Get the adresses in workable format
+Process{
+$originAdress = invoke-restmethod "https://maps.googleapis.com/maps/api/geocode/json?address=$Origin&City=$City&Country=$Country"
+$destAdress = invoke-restmethod "https://maps.googleapis.com/maps/api/geocode/json?address=$Destination&City=$City&Country=$Country"
+$originAdress = $originAdress.results.formatted_address
+$destAdress =  $destAdress.results.formatted_address
+
+#Get Directions
+If($Avoid -eq $true){
+   $RouteInfo = Invoke-RestMethod "https://maps.googleapis.com/maps/api/directions/json?origin=$originAdress&destination=$destAdress&avoid=highways&mode=$mode"
+}
+Else{
+   $RouteInfo = Invoke-RestMethod "https://maps.googleapis.com/maps/api/directions/json?origin=$originAdress&destination=$destAdress&mode=$mode"
+}
+
+}
+#Write data to HTML file
+End{
+ConvertTo-Html -Title 'Route info' -Body "<H2>Distance:$($RouteInfo.routes.legs.distance.text)</H2><br/" |Out-File  -FilePath $filepath
+Foreach($line in $RouteInfo.routes.legs.steps.html_instructions)
+{
+        Add-Content -Value "<br>$line<br/>" -LiteralPath $filepath
+}
+#start explorer and after close delete file to keep the directory clean :-)
+start-process $Browser -ArgumentList $filepath  -wait
+Remove-Item $filepath
+}
+}
+
